@@ -1,0 +1,1288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>History Heatmap Explorer</title>
+    
+    <!-- External Libraries -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <!-- FontAwesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --color-war: #ff4500;
+            --color-empire: #4169e1;
+            --color-tech: #00fa9a;
+            --bg-dark: #111111;
+            --panel-bg: rgba(20, 20, 20, 0.95);
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-dark);
+            color: #e0e0e0;
+            overflow: hidden;
+            margin: 0;
+            padding: 0;
+        }
+
+        h1, h2, h3, .serif {
+            font-family: 'Cinzel', serif;
+        }
+
+        /* Map Container */
+        #map {
+            width: 100vw;
+            height: 100vh;
+            background: #0a0a0a;
+            z-index: 1;
+        }
+
+        /* Vignette Effect */
+        #vignette {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: radial-gradient(circle, transparent 60%, rgba(0,0,0,0.6) 100%);
+            pointer-events: none;
+            z-index: 2;
+        }
+
+        /* UI Overlays */
+        .ui-layer {
+            position: absolute;
+            z-index: 1000;
+            pointer-events: none; /* Let clicks pass through to map by default */
+            transition: opacity 0.3s ease;
+        }
+        
+        .interactive {
+            pointer-events: auto;
+        }
+
+        /* Screenshot Mode: Hide UI */
+        body.hide-ui .ui-layer {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        /* Sidebar */
+        #sidebar {
+            top: 0;
+            right: 0;
+            width: 350px;
+            height: 100vh;
+            background: var(--panel-bg);
+            border-left: 1px solid #333;
+            transform: translateX(100%); /* Hidden by default */
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            backdrop-filter: blur(10px);
+            display: flex;
+            flex-direction: column;
+        }
+
+        #sidebar.open {
+            transform: translateX(0);
+        }
+
+        /* Timeline Control Bar */
+        #timeline-bar {
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 160px;
+            background: linear-gradient(to top, #000 0%, rgba(0,0,0,0.9) 60%, transparent 100%);
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            padding-bottom: 10px;
+        }
+
+        /* News Ticker */
+        #news-ticker-container {
+            width: 100%;
+            height: 24px;
+            background: rgba(0,0,0,0.6);
+            border-top: 1px solid #333;
+            border-bottom: 1px solid #333;
+            overflow: hidden;
+            position: relative;
+            margin-bottom: 5px;
+            display: flex;
+            align-items: center;
+        }
+        #news-ticker-text {
+            white-space: nowrap;
+            position: absolute;
+            will-change: transform;
+            animation: ticker 45s linear infinite;
+            font-size: 0.75rem;
+            color: #ccc;
+            font-family: 'Courier New', monospace;
+            text-transform: uppercase;
+        }
+        @keyframes ticker {
+            0% { transform: translateX(100%); }
+            100% { transform: translateX(-100%); }
+        }
+
+        /* Custom Range Slider */
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: #fff;
+            cursor: pointer;
+            margin-top: -6px;
+            box-shadow: 0 0 10px rgba(255,255,255,0.8);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: #444;
+            border-radius: 2px;
+        }
+
+        /* Heatmap Legend Colors */
+        .dot-war { background-color: var(--color-war); box-shadow: 0 0 8px var(--color-war); }
+        .dot-empire { background-color: var(--color-empire); box-shadow: 0 0 8px var(--color-empire); }
+        .dot-tech { background-color: var(--color-tech); box-shadow: 0 0 8px var(--color-tech); }
+
+        /* Tooltip */
+        #map-tooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.85);
+            border: 1px solid #444;
+            padding: 8px 12px;
+            border-radius: 4px;
+            pointer-events: none;
+            font-size: 0.85rem;
+            display: none;
+            z-index: 2000;
+            max-width: 250px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        }
+        
+        /* Coordinates Display */
+        #coords-display {
+            font-family: 'Courier New', monospace;
+            text-shadow: 0 1px 2px black;
+        }
+
+        /* Mini Chart */
+        #mini-chart {
+            width: 100%;
+            height: 40px;
+            margin-bottom: 5px;
+        }
+        .chart-bar {
+            transition: height 0.2s;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #1a1a1a; }
+        ::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #666; }
+
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.7);
+            z-index: 3000;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(3px);
+        }
+        .modal.active { display: flex; }
+    </style>
+</head>
+<body>
+
+    <!-- Map Container -->
+    <div id="map"></div>
+    <div id="vignette"></div>
+
+    <!-- Map Tooltip -->
+    <div id="map-tooltip"></div>
+
+    <!-- Mouse Coordinates (Bottom Right) -->
+    <div id="coords-display" class="ui-layer bottom-1 right-2 text-[10px] text-gray-500 pointer-events-none z-50">
+        0.00, 0.00
+    </div>
+
+    <!-- Header Overlay -->
+    <div class="ui-layer top-0 left-0 p-6 w-full flex justify-between items-start">
+        <div class="interactive bg-black/60 backdrop-blur-md p-4 rounded-lg border border-gray-800 shadow-2xl">
+            <h1 class="text-2xl font-bold tracking-wider text-white mb-1">HISTORY<span class="text-gray-400">HEATMAP</span></h1>
+            <p class="text-xs text-gray-400 uppercase tracking-widest mb-4">World Atlas 1500 - 2025</p>
+            
+            <!-- Filters -->
+            <div class="space-y-2 text-sm">
+                <label class="flex items-center space-x-2 cursor-pointer hover:bg-white/5 p-1 rounded">
+                    <input type="checkbox" id="toggle-war" checked class="accent-orange-600">
+                    <span class="w-2 h-2 rounded-full dot-war"></span>
+                    <span>Conflict & War</span>
+                    <input type="range" id="opacity-war" min="0" max="1" step="0.1" value="0.8" class="w-16 ml-auto h-1">
+                </label>
+                <label class="flex items-center space-x-2 cursor-pointer hover:bg-white/5 p-1 rounded">
+                    <input type="checkbox" id="toggle-empire" checked class="accent-blue-600">
+                    <span class="w-2 h-2 rounded-full dot-empire"></span>
+                    <span>Empires</span>
+                    <input type="range" id="opacity-empire" min="0" max="1" step="0.1" value="0.6" class="w-16 ml-auto h-1">
+                </label>
+                <label class="flex items-center space-x-2 cursor-pointer hover:bg-white/5 p-1 rounded">
+                    <input type="checkbox" id="toggle-tech" checked class="accent-teal-400">
+                    <span class="w-2 h-2 rounded-full dot-tech"></span>
+                    <span>Technology</span>
+                    <input type="range" id="opacity-tech" min="0" max="1" step="0.1" value="0.7" class="w-16 ml-auto h-1">
+                </label>
+            </div>
+            
+            <!-- Search -->
+            <div class="mt-4 relative">
+                <input type="text" id="search-input" placeholder="Search events..." 
+                    class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-gray-500 transition-colors">
+                <div id="search-results" class="absolute top-full left-0 w-full bg-gray-900 border border-gray-700 mt-1 rounded max-h-40 overflow-y-auto hidden shadow-xl"></div>
+            </div>
+        </div>
+
+        <div class="interactive flex flex-col items-end space-y-2">
+            <!-- Top Controls -->
+            <div class="flex space-x-2">
+                <button onclick="app.ui.toggleScreenshotMode()" title="Screenshot Mode (Hide UI)" class="bg-gray-800 hover:bg-gray-600 text-gray-400 hover:text-white w-10 h-10 rounded border border-gray-600 flex items-center justify-center transition shadow-lg">
+                    <i class="fas fa-camera"></i>
+                </button>
+                <button onclick="app.ui.toggleTheme()" title="Toggle Map Theme" class="bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white w-10 h-10 rounded border border-gray-600 flex items-center justify-center transition shadow-lg">
+                    <i class="fas fa-adjust"></i>
+                </button>
+            </div>
+            <!-- Secondary Controls -->
+            <div class="flex space-x-2">
+                <button onclick="app.ui.toggleEditor()" class="bg-gray-800 hover:bg-gray-700 text-white px-3 py-2 rounded border border-gray-600 text-sm shadow-lg">
+                    <i class="fas fa-edit"></i> Editor
+                </button>
+                <button onclick="app.ui.toggleSidebar()" class="bg-gray-800 hover:bg-gray-700 text-white px-3 py-2 rounded border border-gray-600 text-sm shadow-lg">
+                    <i class="fas fa-bars"></i> Details
+                </button>
+            </div>
+            
+             <!-- Keyboard Hints (Small) -->
+            <div class="text-[10px] text-gray-500 mt-1 bg-black/40 px-2 py-1 rounded backdrop-blur-sm">
+                Space: Play/Pause &bull; Arrows: Seek
+            </div>
+        </div>
+    </div>
+
+    <!-- Story Mode Overlay (Bottom Left) -->
+    <div class="ui-layer bottom-48 left-6 w-64 interactive">
+        <div class="bg-black/60 backdrop-blur-md rounded-lg border border-gray-800 overflow-hidden shadow-2xl">
+            <div class="p-3 border-b border-gray-700 bg-gray-900/50 flex justify-between items-center">
+                <span class="text-xs font-bold uppercase text-gray-400">Story Playlists</span>
+                <i class="fas fa-book-open text-gray-500"></i>
+            </div>
+            <div class="p-2 space-y-1">
+                <button onclick="app.story.load('empires')" class="w-full text-left text-sm px-2 py-1.5 hover:bg-white/10 rounded transition">Rise & Fall of Empires</button>
+                <button onclick="app.story.load('wars')" class="w-full text-left text-sm px-2 py-1.5 hover:bg-white/10 rounded transition">Major Global Conflicts</button>
+                <button onclick="app.story.load('tech')" class="w-full text-left text-sm px-2 py-1.5 hover:bg-white/10 rounded transition">Industrial Revolution</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Story Caption (Center Screen when Active) -->
+    <div id="story-caption" class="ui-layer top-1/4 left-1/2 transform -translate-x-1/2 pointer-events-none text-center hidden">
+        <h2 id="story-title" class="text-4xl font-bold text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] mb-2"></h2>
+        <p id="story-desc" class="text-lg text-gray-200 bg-black/50 px-4 py-2 rounded inline-block backdrop-blur-sm shadow-xl"></p>
+    </div>
+
+    <!-- Sidebar (Right) -->
+    <div id="sidebar" class="ui-layer interactive shadow-2xl">
+        <div class="p-4 border-b border-gray-700 bg-gray-900 flex justify-between items-center">
+            <h2 class="serif text-xl font-bold text-gray-100">Details</h2>
+            <button onclick="app.ui.toggleSidebar()" class="text-gray-400 hover:text-white"><i class="fas fa-times"></i></button>
+        </div>
+        <div id="sidebar-content" class="flex-1 overflow-y-auto p-4 space-y-4">
+            <div class="text-center text-gray-500 mt-10">
+                <i class="fas fa-globe-americas text-4xl mb-3"></i>
+                <p>Click a country or select a year to view active events.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Timeline Bar (Bottom) -->
+    <div id="timeline-bar" class="ui-layer interactive">
+        <div class="container mx-auto px-6 max-w-5xl h-full flex flex-col justify-end pb-3">
+            <!-- Mini Intensity Chart -->
+            <svg id="mini-chart" viewBox="0 0 500 40" preserveAspectRatio="none"></svg>
+
+            <!-- News Ticker -->
+            <div id="news-ticker-container">
+                <div id="news-ticker-text">Welcome to History Heatmap Explorer. Select a year to see events...</div>
+            </div>
+
+            <div class="flex items-center justify-between mb-2">
+                <div class="flex items-center space-x-4">
+                    <button id="play-btn" onclick="app.timeline.togglePlay()" class="w-10 h-10 rounded-full bg-white text-black hover:bg-gray-200 flex items-center justify-center transition shadow">
+                        <i class="fas fa-play ml-1"></i>
+                    </button>
+                    <div class="flex flex-col">
+                        <div class="text-5xl font-bold serif text-white tabular-nums tracking-tighter leading-none" id="year-display">1500</div>
+                        <div id="era-indicator" class="text-[10px] text-orange-400 uppercase tracking-widest font-bold">Renaissance</div>
+                    </div>
+                    
+                    <div class="flex flex-col border-l border-gray-700 pl-4 h-10 justify-center">
+                         <div class="text-[10px] text-gray-400 uppercase tracking-widest">Est. Population</div>
+                         <div id="pop-display" class="text-sm font-mono text-gray-300">460,000,000</div>
+                    </div>
+                    
+                    <div class="flex flex-col border-l border-gray-700 pl-4 h-10 justify-center">
+                        <span class="text-[10px] text-gray-400 uppercase tracking-widest">Active</span>
+                        <span id="active-count" class="text-sm text-blue-400">0 Events</span>
+                    </div>
+                </div>
+
+                <div class="flex items-center space-x-2 bg-gray-900/80 rounded-lg p-1 border border-gray-700 shadow-md">
+                    <button onclick="app.timeline.jump(-50)" class="px-2 py-1 text-xs hover:bg-white/10 rounded text-gray-400">-50</button>
+                    <button onclick="app.timeline.jump(-10)" class="px-2 py-1 text-xs hover:bg-white/10 rounded text-gray-400">-10</button>
+                    <div class="w-px h-4 bg-gray-700"></div>
+                    <button onclick="app.timeline.jump(10)" class="px-2 py-1 text-xs hover:bg-white/10 rounded text-gray-400">+10</button>
+                    <button onclick="app.timeline.jump(50)" class="px-2 py-1 text-xs hover:bg-white/10 rounded text-gray-400">+50</button>
+                </div>
+
+                <div class="flex items-center space-x-2">
+                    <span class="text-xs text-gray-500 uppercase">Speed</span>
+                    <select id="speed-select" onchange="app.timeline.setSpeed(this.value)" class="bg-gray-800 text-xs border border-gray-700 rounded px-1 py-1 focus:outline-none shadow">
+                        <option value="0.25">0.25x</option>
+                        <option value="0.5">0.5x</option>
+                        <option value="1" selected>1x</option>
+                        <option value="2">2x</option>
+                        <option value="4">4x</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="relative w-full mb-1">
+                <input type="range" id="timeline-slider" min="1500" max="2025" value="1500" step="1" 
+                    oninput="app.timeline.scrub(this.value)">
+                <div class="flex justify-between text-[10px] text-gray-500 mt-1 select-none">
+                    <span>1500</span>
+                    <span>1600</span>
+                    <span>1700</span>
+                    <span>1800</span>
+                    <span>1900</span>
+                    <span>2000</span>
+                    <span>2025</span>
+                </div>
+            </div>
+
+            <!-- Footer -->
+            <div class="text-center w-full mt-2 border-t border-gray-800 pt-1">
+                <p class="text-[10px] text-gray-500 font-mono tracking-wider hover:text-gray-400 transition-colors cursor-default">Arnav Dugad © 2025</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Event Editor Modal -->
+    <div id="editor-modal" class="modal">
+        <div class="bg-gray-900 border border-gray-700 rounded-lg p-6 w-full max-w-lg shadow-2xl">
+            <h3 class="text-xl font-bold mb-4">Add Custom Event</h3>
+            <div class="space-y-3">
+                <div class="grid grid-cols-2 gap-3">
+                    <input type="text" id="edit-title" placeholder="Title" class="bg-gray-800 p-2 rounded border border-gray-700 w-full text-sm focus:border-blue-500 outline-none">
+                    <select id="edit-type" class="bg-gray-800 p-2 rounded border border-gray-700 w-full text-sm">
+                        <option value="war">War / Conflict</option>
+                        <option value="empire">Empire / Influence</option>
+                        <option value="tech">Technology</option>
+                    </select>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <input type="number" id="edit-start" placeholder="Start Year" class="bg-gray-800 p-2 rounded border border-gray-700 w-full text-sm">
+                    <input type="number" id="edit-end" placeholder="End Year" class="bg-gray-800 p-2 rounded border border-gray-700 w-full text-sm">
+                </div>
+                <textarea id="edit-desc" placeholder="Description" class="bg-gray-800 p-2 rounded border border-gray-700 w-full text-sm h-20 focus:border-blue-500 outline-none"></textarea>
+                <div class="bg-gray-800 p-3 rounded border border-gray-700 text-xs">
+                    <p class="mb-2 text-gray-400">Click map to set location (Lat/Lon auto-fills on click)</p>
+                    <div class="grid grid-cols-3 gap-2">
+                        <input type="text" id="edit-lat" placeholder="Lat" readonly class="bg-gray-900 p-1 rounded border border-gray-600">
+                        <input type="text" id="edit-lon" placeholder="Lon" readonly class="bg-gray-900 p-1 rounded border border-gray-600">
+                        <input type="number" id="edit-rad" placeholder="Radius (km)" value="500" class="bg-gray-900 p-1 rounded border border-gray-600">
+                    </div>
+                </div>
+            </div>
+            <div class="mt-6 flex justify-between items-center">
+                 <button onclick="app.data.exportData()" class="px-3 py-2 rounded text-gray-400 hover:text-white border border-gray-700 hover:bg-gray-800 text-xs transition">
+                    <i class="fas fa-download mr-1"></i> Export JSON
+                </button>
+                <div class="space-x-2">
+                    <button onclick="app.ui.toggleEditor()" class="px-4 py-2 rounded text-gray-400 hover:bg-white/5 transition">Cancel</button>
+                    <button onclick="app.data.saveCustomEvent()" class="px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold transition">Save Event</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * History Heatmap Explorer
+         * A single-file implementation using Leaflet + Canvas + Procedural Data
+         */
+
+        const CONSTANTS = {
+            START_YEAR: 1500,
+            END_YEAR: 2025,
+            COLORS: {
+                war: { r: 255, g: 69, b: 0 },    // OrangeRed
+                empire: { r: 65, g: 105, b: 225 }, // RoyalBlue
+                tech: { r: 0, g: 250, b: 154 }     // MediumSpringGreen
+            },
+            POPULATION_DATA: [
+                { year: 1500, pop: 461000000 },
+                { year: 1600, pop: 554000000 },
+                { year: 1700, pop: 603000000 },
+                { year: 1800, pop: 989000000 },
+                { year: 1900, pop: 1650000000 },
+                { year: 1950, pop: 2540000000 },
+                { year: 2000, pop: 6140000000 },
+                { year: 2025, pop: 8100000000 }
+            ],
+            ERAS: [
+                { start: 1500, label: "Renaissance & Reformation" },
+                { start: 1600, label: "Age of Discovery" },
+                { start: 1750, label: "Industrial Revolution" },
+                { start: 1850, label: "Age of Imperialism" },
+                { start: 1914, label: "World Wars" },
+                { start: 1945, label: "Cold War Era" },
+                { start: 1991, label: "Information Age" }
+            ]
+        };
+
+        // --- Data Generation & Management ---
+
+        class DataManager {
+            constructor() {
+                this.events = [];
+                this.customEvents = JSON.parse(localStorage.getItem('hhe_custom_events') || '[]');
+                this.initData();
+            }
+
+            initData() {
+                // Seed Core Historical Events (Greatly Expanded)
+                const seeds = [
+                    // --- 16th Century ---
+                    { id: 'reformation', type: 'tech', start: 1517, end: 1600, title: 'Protestant Reformation', desc: 'Luther publishes 95 Theses, sparking religious upheaval.', lat: 51.8, lon: 12.6, rad: 800, int: 0.7, tags: ['europe', 'religion'] },
+                    { id: 'aztec_conq', type: 'war', start: 1519, end: 1521, title: 'Conquest of Aztec Empire', desc: 'Cortés conquers the Aztec Empire.', lat: 19.4, lon: -99.1, rad: 600, int: 0.9, tags: ['mexico', 'spain'] },
+                    { id: 'magellan', type: 'tech', start: 1519, end: 1522, title: 'Circumnavigation', desc: 'Magellan/Elcano expedition circles the globe.', lat: -53, lon: -70, rad: 2000, int: 0.6, tags: ['exploration'] },
+                    { id: 'suleiman', type: 'empire', start: 1520, end: 1566, title: 'Reign of Suleiman', desc: 'Peak of Ottoman Empire power and culture.', lat: 41, lon: 28, rad: 1500, int: 0.8, tags: ['ottoman', 'europe'] },
+                    { id: 'panipat_1', type: 'war', start: 1526, end: 1526, title: 'Battle of Panipat', desc: 'Babur defeats Lodi, founding the Mughal Empire.', lat: 29.3, lon: 76.9, rad: 300, int: 0.8, tags: ['india', 'mughal'] },
+                    { id: 'inca_conq', type: 'war', start: 1532, end: 1572, title: 'Conquest of Inca Empire', desc: 'Pizarro conquers the Inca Empire.', lat: -13.5, lon: -71.9, rad: 800, int: 0.9, tags: ['peru', 'spain'] },
+                    { id: 'copernicus', type: 'tech', start: 1543, end: 1600, title: 'Heliocentric Theory', desc: 'Copernicus publishes De revolutionibus.', lat: 54, lon: 19, rad: 600, int: 0.5, tags: ['science'] },
+                    { id: 'akbar', type: 'empire', start: 1556, end: 1605, title: 'Reign of Akbar', desc: 'Expansion and consolidation of Mughal Empire.', lat: 27, lon: 78, rad: 1200, int: 0.8, tags: ['india', 'mughal'] },
+                    { id: 'lepanto', type: 'war', start: 1571, end: 1572, title: 'Battle of Lepanto', desc: 'Holy League defeats Ottoman fleet.', lat: 38.2, lon: 21.3, rad: 400, int: 0.8, tags: ['europe', 'ottoman'] },
+                    { id: 'armada', type: 'war', start: 1588, end: 1589, title: 'Spanish Armada', desc: 'Failed invasion of England by Spain.', lat: 50, lon: -2, rad: 600, int: 0.8, tags: ['uk', 'spain'] },
+                    { id: 'imjin', type: 'war', start: 1592, end: 1598, title: 'Imjin War', desc: 'Japanese invasions of Korea.', lat: 36, lon: 128, rad: 500, int: 0.8, tags: ['korea', 'japan'] },
+
+                    // --- 17th Century ---
+                    { id: 'voc', type: 'empire', start: 1602, end: 1799, title: 'Dutch East India Company', desc: 'First multinational corporation dominates trade.', lat: 52, lon: 4, rad: 2500, int: 0.7, tags: ['trade', 'dutch'] },
+                    { id: 'jamestown', type: 'empire', start: 1607, end: 1700, title: 'Jamestown Settlement', desc: 'First permanent English settlement in Americas.', lat: 37.2, lon: -76.7, rad: 400, int: 0.5, tags: ['usa', 'uk'] },
+                    { id: '30years', type: 'war', start: 1618, end: 1648, title: 'Thirty Years War', desc: 'A destructive conflict in Central Europe.', lat: 51, lon: 10, rad: 1000, int: 0.9, tags: ['europe', 'religion'] },
+                    { id: 'mayflower', type: 'empire', start: 1620, end: 1650, title: 'Pilgrims Landing', desc: 'Mayflower Compact and Plymouth Colony.', lat: 41.9, lon: -70.6, rad: 300, int: 0.5, tags: ['usa', 'uk'] },
+                    { id: 'taj_mahal', type: 'tech', start: 1632, end: 1653, title: 'Construction of Taj Mahal', desc: 'Masterpiece of Mughal architecture.', lat: 27.1, lon: 78.0, rad: 100, int: 0.4, tags: ['india', 'culture'] },
+                    { id: 'qing_conq', type: 'war', start: 1644, end: 1683, title: 'Qing Conquest of Ming', desc: 'Manchu conquest of China.', lat: 39.9, lon: 116.4, rad: 1500, int: 0.8, tags: ['china'] },
+                    { id: 'eng_civil', type: 'war', start: 1642, end: 1651, title: 'English Civil War', desc: 'Conflict between Parliamentarians and Royalists.', lat: 52, lon: -1, rad: 500, int: 0.7, tags: ['uk'] },
+                    { id: 'louis_xiv', type: 'empire', start: 1643, end: 1715, title: 'Reign of Louis XIV', desc: 'The Sun King centralizes French power.', lat: 48.8, lon: 2.3, rad: 800, int: 0.6, tags: ['france'] },
+                    { id: 'newton', type: 'tech', start: 1687, end: 1700, title: 'Principia Mathematica', desc: 'Newton defines laws of motion and gravity.', lat: 52.2, lon: 0.1, rad: 500, int: 0.6, tags: ['science'] },
+                    
+                    // --- 18th Century ---
+                    { id: 'span_succ', type: 'war', start: 1701, end: 1714, title: 'War of Spanish Succession', desc: 'European conflict over Spanish throne.', lat: 45, lon: 5, rad: 1200, int: 0.8, tags: ['europe'] },
+                    { id: 'peter_great', type: 'empire', start: 1682, end: 1725, title: 'Peter the Great', desc: 'Modernization and expansion of Russia.', lat: 59.9, lon: 30.3, rad: 1500, int: 0.7, tags: ['russia'] },
+                    { id: 'seven_years', type: 'war', start: 1756, end: 1763, title: 'Seven Years\' War', desc: 'First true "world war" involving major powers.', lat: 51, lon: 10, rad: 2500, int: 0.9, tags: ['global'] },
+                    { id: 'plassey', type: 'war', start: 1757, end: 1757, title: 'Battle of Plassey', desc: 'EIC establishes control over Bengal.', lat: 23.8, lon: 88.2, rad: 300, int: 0.7, tags: ['india', 'uk'] },
+                    { id: 'steam', type: 'tech', start: 1760, end: 1840, title: 'Steam Engine', desc: 'Industrial Revolution power source.', lat: 53, lon: -2, rad: 800, int: 0.7, tags: ['uk'] },
+                    { id: 'cook', type: 'empire', start: 1768, end: 1779, title: 'Cook\'s Voyages', desc: 'Exploration of Pacific and Australia.', lat: -33, lon: 151, rad: 2000, int: 0.5, tags: ['exploration'] },
+                    { id: 'am_rev', type: 'war', start: 1775, end: 1783, title: 'American Revolution', desc: 'US independence from Britain.', lat: 40, lon: -75, rad: 800, int: 0.8, tags: ['usa'] },
+                    { id: 'fr_rev', type: 'war', start: 1789, end: 1799, title: 'French Revolution', desc: 'Overthrow of French monarchy.', lat: 48.8, lon: 2.3, rad: 600, int: 0.9, tags: ['france'] },
+                    { id: 'jenner', type: 'tech', start: 1796, end: 1800, title: 'Smallpox Vaccine', desc: 'Edward Jenner creates first vaccine.', lat: 51.7, lon: -2.4, rad: 400, int: 0.6, tags: ['science', 'health'] },
+                    
+                    // --- 19th Century ---
+                    { id: 'napoleonic', type: 'war', start: 1803, end: 1815, title: 'Napoleonic Wars', desc: 'Napoleon\'s campaigns across Europe.', lat: 48, lon: 2, rad: 1500, int: 1.0, tags: ['france', 'europe'] },
+                    { id: 'haitian_rev', type: 'war', start: 1791, end: 1804, title: 'Haitian Revolution', desc: 'Successful slave rebellion.', lat: 19, lon: -72, rad: 300, int: 0.7, tags: ['caribbean'] },
+                    { id: 'bolivar', type: 'war', start: 1810, end: 1825, title: 'Latin American Wars', desc: 'Independence movements across South America.', lat: -10, lon: -70, rad: 1800, int: 0.8, tags: ['south_america'] },
+                    { id: 'telegraph', type: 'tech', start: 1837, end: 1860, title: 'Telegraph Invention', desc: 'Revolution in long-distance communication.', lat: 40, lon: -74, rad: 1000, int: 0.6, tags: ['usa', 'tech'] },
+                    { id: 'opium', type: 'war', start: 1839, end: 1842, title: 'First Opium War', desc: 'Britain forces trade opening in China.', lat: 23, lon: 113, rad: 600, int: 0.7, tags: ['china', 'uk'] },
+                    { id: 'potato_famine', type: 'empire', start: 1845, end: 1849, title: 'Great Famine', desc: 'Mass starvation and emigration in Ireland.', lat: 53, lon: -8, rad: 400, int: 0.6, tags: ['ireland'] },
+                    { id: 'darwin', type: 'tech', start: 1859, end: 1880, title: 'Origin of Species', desc: 'Darwin publishes theory of evolution.', lat: 51, lon: 0, rad: 500, int: 0.5, tags: ['science'] },
+                    { id: 'rail', type: 'tech', start: 1830, end: 1900, title: 'Railways', desc: 'Expansion of rail networks.', lat: 40, lon: -95, rad: 2000, int: 0.6, tags: ['usa', 'europe'] },
+                    { id: 'sepoy', type: 'war', start: 1857, end: 1858, title: 'Indian Rebellion', desc: 'Uprising against British rule in India.', lat: 28, lon: 77, rad: 800, int: 0.8, tags: ['india'] },
+                    { id: 'civilwar_us', type: 'war', start: 1861, end: 1865, title: 'American Civil War', desc: 'Conflict between Union and Confederacy.', lat: 38, lon: -77, rad: 900, int: 0.8, tags: ['usa'] },
+                    { id: 'meiji', type: 'tech', start: 1868, end: 1912, title: 'Meiji Restoration', desc: 'Modernization and industrialization of Japan.', lat: 35, lon: 139, rad: 800, int: 0.7, tags: ['japan'] },
+                    { id: 'unification_ger', type: 'empire', start: 1871, end: 1871, title: 'German Unification', desc: 'Creation of German Empire under Bismarck.', lat: 52, lon: 13, rad: 600, int: 0.7, tags: ['germany'] },
+                    { id: 'scramble', type: 'empire', start: 1881, end: 1914, title: 'Scramble for Africa', desc: 'Colonization of African territory by Europe.', lat: 0, lon: 20, rad: 3000, int: 0.8, tags: ['africa'] },
+                    { id: 'span_am', type: 'war', start: 1898, end: 1898, title: 'Spanish-American War', desc: 'US gains overseas territories.', lat: 23, lon: -82, rad: 1000, int: 0.6, tags: ['usa', 'cuba'] },
+                    
+                    // --- 20th Century ---
+                    { id: 'boxer', type: 'war', start: 1899, end: 1901, title: 'Boxer Rebellion', desc: 'Anti-imperialist uprising in China.', lat: 39, lon: 116, rad: 500, int: 0.6, tags: ['china'] },
+                    { id: 'flight', type: 'tech', start: 1903, end: 1920, title: 'First Flight', desc: 'Wright Brothers achieve flight.', lat: 36, lon: -75, rad: 300, int: 0.6, tags: ['usa', 'tech'] },
+                    { id: 'russo_jap', type: 'war', start: 1904, end: 1905, title: 'Russo-Japanese War', desc: 'Conflict over Manchuria and Korea.', lat: 40, lon: 130, rad: 700, int: 0.7, tags: ['asia'] },
+                    { id: 'auto', type: 'tech', start: 1908, end: 2000, title: 'Automobile Mass Production', desc: 'Ford Model T and the rise of car culture.', lat: 42, lon: -83, rad: 1000, int: 0.7, tags: ['usa'] },
+                    { id: 'mex_rev', type: 'war', start: 1910, end: 1920, title: 'Mexican Revolution', desc: 'Major armed struggle transforming Mexico.', lat: 23, lon: -102, rad: 800, int: 0.7, tags: ['mexico'] },
+                    { id: 'panama_canal', type: 'tech', start: 1904, end: 1914, title: 'Panama Canal', desc: 'Opening of key trade route.', lat: 9, lon: -79, rad: 200, int: 0.6, tags: ['americas'] },
+                    { id: 'ww1', type: 'war', start: 1914, end: 1918, title: 'World War I', desc: 'Global conflict originating in Europe.', lat: 50, lon: 4, rad: 1500, int: 1.0, tags: ['global'] },
+                    { id: 'rus_rev', type: 'war', start: 1917, end: 1923, title: 'Russian Revolution', desc: 'Bolsheviks seize power.', lat: 59, lon: 30, rad: 1000, int: 0.9, tags: ['russia'] },
+                    { id: 'penicillin', type: 'tech', start: 1928, end: 1945, title: 'Discovery of Penicillin', desc: 'Fleming discovers antibiotics.', lat: 51, lon: 0, rad: 400, int: 0.6, tags: ['health'] },
+                    { id: 'ww2_eur', type: 'war', start: 1939, end: 1945, title: 'WWII (Europe)', desc: 'The European theater of World War II.', lat: 52, lon: 13, rad: 1800, int: 1.0, tags: ['germany'] },
+                    { id: 'ww2_pac', type: 'war', start: 1941, end: 1945, title: 'WWII (Pacific)', desc: 'Pacific theater battles.', lat: 20, lon: 135, rad: 2500, int: 0.9, tags: ['japan', 'usa'] },
+                    { id: 'nuke', type: 'tech', start: 1945, end: 1945, title: 'Atomic Bomb', desc: 'Bombings of Hiroshima and Nagasaki.', lat: 34, lon: 132, rad: 400, int: 1.0, tags: ['japan', 'war'] },
+                    { id: 'partition', type: 'empire', start: 1947, end: 1948, title: 'Partition of India', desc: 'Division of British India into India and Pakistan.', lat: 30, lon: 72, rad: 800, int: 0.8, tags: ['india'] },
+                    { id: 'israel', type: 'war', start: 1948, end: 1949, title: '1948 Arab-Israeli War', desc: 'Conflict following Israel declaration of independence.', lat: 31, lon: 35, rad: 300, int: 0.7, tags: ['middle_east'] },
+                    { id: 'prc', type: 'empire', start: 1949, end: 1950, title: 'Founding of PRC', desc: 'Communist party takes control of China.', lat: 39, lon: 116, rad: 1500, int: 0.8, tags: ['china'] },
+                    { id: 'korean', type: 'war', start: 1950, end: 1953, title: 'Korean War', desc: 'War between North and South Korea.', lat: 38, lon: 127, rad: 500, int: 0.8, tags: ['asia'] },
+                    { id: 'vietnam', type: 'war', start: 1955, end: 1975, title: 'Vietnam War', desc: 'Conflict in Vietnam, Laos, and Cambodia.', lat: 14, lon: 108, rad: 600, int: 0.7, tags: ['asia'] },
+                    { id: 'sputnik', type: 'tech', start: 1957, end: 1957, title: 'Sputnik 1', desc: 'First artificial satellite.', lat: 45, lon: 63, rad: 500, int: 0.6, tags: ['space', 'russia'] },
+                    { id: 'cuban_missile', type: 'war', start: 1962, end: 1962, title: 'Cuban Missile Crisis', desc: 'Nuclear standoff between USA and USSR.', lat: 23, lon: -80, rad: 1000, int: 0.9, tags: ['cuba', 'cold_war'] },
+                    { id: 'civil_rights', type: 'empire', start: 1954, end: 1968, title: 'US Civil Rights Movement', desc: 'Struggle for social justice.', lat: 35, lon: -85, rad: 1000, int: 0.6, tags: ['usa'] },
+                    { id: 'moon', type: 'tech', start: 1969, end: 1972, title: 'Moon Landing', desc: 'Apollo 11 lands on the Moon.', lat: 28, lon: -80, rad: 1000, int: 1.0, tags: ['usa', 'space'] },
+                    { id: 'khmer', type: 'war', start: 1975, end: 1979, title: 'Khmer Rouge', desc: 'Genocide in Cambodia.', lat: 12, lon: 104, rad: 300, int: 0.7, tags: ['asia'] },
+                    { id: 'iran_rev', type: 'war', start: 1979, end: 1979, title: 'Iranian Revolution', desc: 'Overthrow of the Pahlavi dynasty.', lat: 35, lon: 51, rad: 500, int: 0.7, tags: ['middle_east'] },
+                    { id: 'chernobyl', type: 'tech', start: 1986, end: 1986, title: 'Chernobyl Disaster', desc: 'Nuclear accident in Ukraine.', lat: 51, lon: 30, rad: 400, int: 0.7, tags: ['tech', 'disaster'] },
+                    { id: 'wall', type: 'empire', start: 1989, end: 1989, title: 'Fall of Berlin Wall', desc: 'Symbolic end of Cold War.', lat: 52, lon: 13, rad: 300, int: 0.8, tags: ['germany'] },
+                    { id: 'internet', type: 'tech', start: 1990, end: 2025, title: 'Internet / Digital Age', desc: 'The World Wide Web connects the globe.', lat: 37, lon: -122, rad: 4000, int: 0.9, tags: ['global'] },
+                    { id: 'gulf', type: 'war', start: 1990, end: 1991, title: 'Gulf War', desc: 'Coalition forces against Iraq.', lat: 29, lon: 47, rad: 600, int: 0.7, tags: ['middle_east'] },
+                    { id: 'rwanda', type: 'war', start: 1994, end: 1994, title: 'Rwandan Genocide', desc: 'Mass slaughter of Tutsi.', lat: -1, lon: 29, rad: 200, int: 0.7, tags: ['africa'] },
+                    
+                    // --- 21st Century ---
+                    { id: '911', type: 'war', start: 2001, end: 2002, title: 'War on Terror', desc: 'Global military campaign following 9/11 attacks.', lat: 34, lon: 69, rad: 1000, int: 0.8, tags: ['usa', 'middle_east'] },
+                    { id: 'iraq', type: 'war', start: 2003, end: 2011, title: 'Iraq War', desc: 'Invasion of Iraq.', lat: 33, lon: 44, rad: 600, int: 0.7, tags: ['middle_east'] },
+                    { id: 'iphone', type: 'tech', start: 2007, end: 2025, title: 'Smartphone Era', desc: 'Launch of iPhone transforms tech.', lat: 37, lon: -122, rad: 1000, int: 0.6, tags: ['tech'] },
+                    { id: 'arab_spring', type: 'war', start: 2010, end: 2012, title: 'Arab Spring', desc: 'Wave of protests and uprisings in Arab world.', lat: 30, lon: 31, rad: 1500, int: 0.8, tags: ['middle_east', 'africa'] },
+                    { id: 'syria', type: 'war', start: 2011, end: 2020, title: 'Syrian Civil War', desc: 'Ongoing multi-sided civil war.', lat: 34, lon: 38, rad: 500, int: 0.8, tags: ['middle_east'] },
+                    { id: 'brexit', type: 'empire', start: 2016, end: 2020, title: 'Brexit', desc: 'UK withdrawal from the European Union.', lat: 51, lon: 0, rad: 600, int: 0.6, tags: ['uk', 'europe'] },
+                    { id: 'covid', type: 'tech', start: 2019, end: 2022, title: 'COVID-19 Pandemic', desc: 'Global health crisis and vaccine race.', lat: 30, lon: 114, rad: 4000, int: 0.9, tags: ['global', 'health'] },
+                    { id: 'ukraine', type: 'war', start: 2022, end: 2025, title: 'Russo-Ukrainian War', desc: 'Escalation of conflict in Ukraine.', lat: 49, lon: 32, rad: 800, int: 0.9, tags: ['europe', 'russia'] },
+
+                    // --- Long Empires (Background) ---
+                    { id: 'ottoman', type: 'empire', start: 1500, end: 1922, title: 'Ottoman Empire', desc: 'Empire controlling much of Southeast Europe, Western Asia, and Northern Africa.', lat: 41, lon: 29, rad: 1800, int: 0.6, tags: ['turkey'] },
+                    { id: 'spanish', type: 'empire', start: 1500, end: 1898, title: 'Spanish Empire', desc: 'One of the largest empires in history.', lat: 40, lon: -4, rad: 3000, int: 0.5, tags: ['spain', 'americas'] },
+                    { id: 'mughal', type: 'empire', start: 1526, end: 1857, title: 'Mughal Empire', desc: 'Empire in the Indian subcontinent.', lat: 28, lon: 77, rad: 1200, int: 0.6, tags: ['india'] },
+                    { id: 'qing', type: 'empire', start: 1644, end: 1912, title: 'Qing Dynasty', desc: 'The last imperial dynasty of China.', lat: 35, lon: 105, rad: 2000, int: 0.7, tags: ['china'] },
+                    { id: 'british', type: 'empire', start: 1600, end: 1950, title: 'British Empire', desc: 'The empire on which the sun never set.', lat: 51, lon: 0, rad: 4000, int: 0.8, tags: ['uk', 'global'] },
+                    { id: 'soviet', type: 'empire', start: 1922, end: 1991, title: 'Soviet Union', desc: 'Transcontinental communist state.', lat: 55, lon: 37, rad: 3500, int: 0.8, tags: ['russia'] }
+                ];
+
+                // Procedural Filler (to reach ~150 and make map look active)
+                const fillers = [];
+                for(let i=0; i<80; i++) {
+                    const year = Math.floor(Math.random() * (2020 - 1500) + 1500);
+                    const dur = Math.floor(Math.random() * 20 + 5);
+                    const lat = (Math.random() * 140) - 70;
+                    const lon = (Math.random() * 360) - 180;
+                    const type = Math.random() > 0.6 ? 'tech' : (Math.random() > 0.5 ? 'war' : 'empire');
+                    fillers.push({
+                        id: `gen_${i}`,
+                        type: type,
+                        start: year,
+                        end: year + dur,
+                        title: `${type === 'war' ? 'Local Conflict' : (type === 'empire' ? 'Regional Influence' : 'Innovation')} #${i}`,
+                        desc: 'Historical minor event.',
+                        lat: lat,
+                        lon: lon,
+                        rad: Math.random() * 500 + 300,
+                        int: Math.random() * 0.4 + 0.1,
+                        tags: ['generated']
+                    });
+                }
+
+                // Transform to Schema
+                this.events = [...seeds, ...fillers, ...this.customEvents].map(e => ({
+                    id: e.id,
+                    type: e.type,
+                    start: e.start,
+                    end: e.end,
+                    title: e.title,
+                    description: e.desc,
+                    hotspots: [{ lat: e.lat, lon: e.lon, weight: e.int, radiusKm: e.rad }],
+                    intensity: e.int,
+                    tags: e.tags || []
+                }));
+            }
+
+            getActiveEvents(year) {
+                return this.events.filter(e => year >= e.start && year <= e.end);
+            }
+
+            addCustomEvent(evt) {
+                this.customEvents.push(evt);
+                localStorage.setItem('hhe_custom_events', JSON.stringify(this.customEvents));
+                this.initData(); // Rebuild
+                app.ui.showToast("Event Saved!");
+            }
+
+            exportData() {
+                const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(this.customEvents));
+                const downloadAnchorNode = document.createElement('a');
+                downloadAnchorNode.setAttribute("href", dataStr);
+                downloadAnchorNode.setAttribute("download", "my_history_events.json");
+                document.body.appendChild(downloadAnchorNode);
+                downloadAnchorNode.click();
+                downloadAnchorNode.remove();
+            }
+
+            getChartData() {
+                const data = [];
+                for(let y = CONSTANTS.START_YEAR; y <= CONSTANTS.END_YEAR; y+=5) {
+                    const count = this.getActiveEvents(y).reduce((acc, curr) => acc + curr.intensity, 0);
+                    data.push(count);
+                }
+                return data;
+            }
+        }
+
+        // --- Custom Leaflet Heat Layer ---
+
+        L.HistoryHeatLayer = L.Layer.extend({
+            initialize: function (dataManager) {
+                this.dataManager = dataManager;
+                this._canvas = document.createElement('canvas');
+                this._ctx = this._canvas.getContext('2d');
+            },
+
+            onAdd: function (map) {
+                this._map = map;
+                this._canvas.classList.add('leaflet-zoom-animated');
+                // Ensure canvas is below markers but above tiles
+                map.getPanes().overlayPane.appendChild(this._canvas);
+                map.on('moveend zoomend', this._reset, this);
+                this._reset();
+            },
+
+            onRemove: function (map) {
+                map.getPanes().overlayPane.removeChild(this._canvas);
+                map.off('moveend zoomend', this._reset, this);
+            },
+
+            _reset: function () {
+                const size = this._map.getSize();
+                const pos = this._map.containerPointToLayerPoint([0, 0]);
+                
+                L.DomUtil.setPosition(this._canvas, pos);
+                this._canvas.width = size.x;
+                this._canvas.height = size.y;
+                
+                if(app && app.timeline) app.timeline.render(true);
+            },
+
+            draw: function (year, filters, opacities) {
+                if (!this._map) return;
+                
+                const ctx = this._ctx;
+                const w = this._canvas.width;
+                const h = this._canvas.height;
+                
+                ctx.clearRect(0, 0, w, h);
+                
+                ctx.globalCompositeOperation = 'screen'; 
+                const pulse = 1 + Math.sin(Date.now() / 500) * 0.08; 
+                const active = this.dataManager.getActiveEvents(year);
+                const focusedId = app.focusedEventId;
+
+                active.forEach(evt => {
+                    if (!filters[evt.type]) return;
+
+                    const spot = evt.hotspots[0]; 
+                    const point = this._map.latLngToContainerPoint([spot.lat, spot.lon]);
+                    const metersPerPixel = 40075016 * Math.cos(spot.lat * Math.PI / 180) / Math.pow(2, this._map.getZoom() + 8);
+                    let pixelRadius = (spot.radiusKm * 1000) / metersPerPixel;
+                    
+                    if (pixelRadius < 2) pixelRadius = 2; 
+                    if (pixelRadius > 1000) pixelRadius = 1000;
+                    
+                    pixelRadius *= pulse;
+
+                    if (point.x + pixelRadius < 0 || point.x - pixelRadius > w || 
+                        point.y + pixelRadius < 0 || point.y - pixelRadius > h) return;
+
+                    let alphaMult = 1;
+                    if (focusedId && focusedId !== evt.id) {
+                        alphaMult = 0.15; 
+                    }
+
+                    const grad = ctx.createRadialGradient(point.x, point.y, 0, point.x, point.y, pixelRadius);
+                    const c = CONSTANTS.COLORS[evt.type];
+                    const globalAlpha = opacities[evt.type] * alphaMult;
+                    const weight = spot.weight * globalAlpha;
+
+                    grad.addColorStop(0, `rgba(${c.r}, ${c.g}, ${c.b}, ${weight})`);
+                    grad.addColorStop(0.5, `rgba(${c.r}, ${c.g}, ${c.b}, ${weight * 0.4})`);
+                    grad.addColorStop(1, `rgba(${c.r}, ${c.g}, ${c.b}, 0)`);
+
+                    ctx.fillStyle = grad;
+                    ctx.beginPath();
+                    ctx.arc(point.x, point.y, pixelRadius, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+            }
+        });
+
+        // --- Timeline & App Logic ---
+
+        class TimelineController {
+            constructor(dataManager, renderCallback) {
+                this.data = dataManager;
+                this.renderCb = renderCallback;
+                
+                this.year = 1500;
+                this.lastIntYear = 1500;
+                this.isPlaying = false;
+                this.speed = 1; 
+                this.lastTime = 0;
+                
+                this.els = {
+                    display: document.getElementById('year-display'),
+                    popDisplay: document.getElementById('pop-display'),
+                    slider: document.getElementById('timeline-slider'),
+                    playBtn: document.getElementById('play-btn'),
+                    count: document.getElementById('active-count'),
+                    chart: document.getElementById('mini-chart'),
+                    ticker: document.getElementById('news-ticker-text'),
+                    era: document.getElementById('era-indicator')
+                };
+
+                this.filters = { war: true, empire: true, tech: true };
+                this.opacities = { war: 0.8, empire: 0.6, tech: 0.7 };
+
+                this.setupChart();
+                
+                requestAnimationFrame(this.loop.bind(this));
+            }
+
+            setupChart() {
+                const points = this.data.getChartData();
+                const max = Math.max(...points);
+                const width = 500;
+                const height = 40;
+                const stepX = width / points.length;
+                
+                let d = `M 0,${height} `;
+                points.forEach((val, i) => {
+                    const h = (val / max) * height;
+                    d += `L ${i * stepX},${height - h} `;
+                });
+                d += `L ${width},${height} Z`;
+
+                this.els.chart.innerHTML = `<path d="${d}" fill="#333" stroke="none" opacity="0.5" />`;
+            }
+
+            togglePlay() {
+                this.isPlaying = !this.isPlaying;
+                this.els.playBtn.innerHTML = this.isPlaying ? '<i class="fas fa-pause"></i>' : '<i class="fas fa-play ml-1"></i>';
+            }
+
+            setSpeed(val) {
+                this.speed = parseFloat(val);
+            }
+
+            jump(delta) {
+                this.scrub(Math.min(CONSTANTS.END_YEAR, Math.max(CONSTANTS.START_YEAR, parseInt(this.year) + delta)));
+            }
+
+            scrub(val) {
+                this.year = parseFloat(val);
+                this.updateUI();
+            }
+
+            updateUI() {
+                const intYear = Math.floor(this.year);
+                this.els.display.innerText = intYear;
+                this.els.slider.value = intYear;
+                
+                this.updatePopulation(intYear);
+                this.updateEra(intYear);
+
+                const active = this.data.getActiveEvents(intYear);
+                this.els.count.innerText = `${active.length} Events`;
+                
+                // Update News Ticker occasionally or on year change
+                if (intYear !== this.lastIntYear) {
+                    
+                    const headlines = active.map(e => e.title.toUpperCase()).join(' +++ ');
+                    if(headlines.length > 0) {
+                         this.els.ticker.innerText = `+++ ${intYear} HEADLINES +++ ${headlines} +++`;
+                    } else {
+                         this.els.ticker.innerText = `+++ ${intYear} +++ SILENT YEAR +++`;
+                    }
+                    
+                    this.lastIntYear = intYear;
+                }
+            }
+
+            updateEra(year) {
+                const era = CONSTANTS.ERAS.slice().reverse().find(e => year >= e.start);
+                if (era) {
+                    this.els.era.innerText = era.label;
+                } else {
+                    this.els.era.innerText = "Historical Period";
+                }
+            }
+
+            updatePopulation(year) {
+                const data = CONSTANTS.POPULATION_DATA;
+                let lower = data[0], upper = data[data.length-1];
+                
+                for(let i=0; i<data.length-1; i++) {
+                    if (year >= data[i].year && year <= data[i+1].year) {
+                        lower = data[i];
+                        upper = data[i+1];
+                        break;
+                    }
+                }
+
+                if (year < lower.year) {
+                     this.els.popDisplay.innerText = lower.pop.toLocaleString();
+                     return;
+                }
+
+                const range = upper.year - lower.year;
+                const progress = (year - lower.year) / range;
+                const pop = Math.floor(lower.pop + (upper.pop - lower.pop) * progress);
+                
+                this.els.popDisplay.innerText = pop.toLocaleString();
+            }
+
+            render(force = false) {
+                this.renderCb(this.year, this.filters, this.opacities);
+            }
+
+            loop(timestamp) {
+                if (this.isPlaying) {
+                    if (!this.lastTime) this.lastTime = timestamp;
+                    const delta = timestamp - this.lastTime;
+                    const interval = 100 / this.speed; 
+
+                    if (delta > interval) {
+                        this.year += (1 * (this.speed > 2 ? 2 : 1)); 
+                        if (this.year >= CONSTANTS.END_YEAR) {
+                            this.year = CONSTANTS.END_YEAR;
+                            this.isPlaying = false;
+                            this.els.playBtn.innerHTML = '<i class="fas fa-play ml-1"></i>';
+                        }
+                        this.updateUI();
+                        this.lastTime = timestamp;
+                    }
+                } else {
+                    this.lastTime = timestamp; 
+                }
+
+                this.render();
+                requestAnimationFrame(this.loop.bind(this));
+            }
+        }
+
+        class UIManager {
+            constructor(data) {
+                this.data = data;
+                this.map = null;
+                this.sidebar = document.getElementById('sidebar');
+                this.tooltip = document.getElementById('map-tooltip');
+                this.coordsDisplay = document.getElementById('coords-display');
+                this.basemaps = {};
+                this.highlightLayer = null; 
+                this.isScreenshotMode = false;
+                
+                this.bindEvents();
+            }
+
+            bindEvents() {
+                ['war', 'empire', 'tech'].forEach(type => {
+                    document.getElementById(`toggle-${type}`).addEventListener('change', (e) => {
+                        app.timeline.filters[type] = e.target.checked;
+                    });
+                    document.getElementById(`opacity-${type}`).addEventListener('input', (e) => {
+                        app.timeline.opacities[type] = parseFloat(e.target.value);
+                    });
+                });
+
+                const searchIn = document.getElementById('search-input');
+                searchIn.addEventListener('input', (e) => this.handleSearch(e.target.value));
+
+                document.getElementById('map').addEventListener('mousemove', (e) => {
+                    this.handleMapHover(e);
+                });
+            }
+
+            setMap(map, basemaps) {
+                this.map = map;
+                this.basemaps = basemaps;
+                
+                map.on('mousemove', (e) => {
+                    this.updateCoords(e);
+                });
+
+                map.on('click', (e) => {
+                    if (this.isScreenshotMode) return; // Ignore during screenshot mode
+
+                    if (document.getElementById('editor-modal').classList.contains('active')) {
+                        document.getElementById('edit-lat').value = e.latlng.lat.toFixed(2);
+                        document.getElementById('edit-lon').value = e.latlng.lng.toFixed(2);
+                        return;
+                    }
+
+                    const clickedLat = e.latlng.lat;
+                    const clickedLon = e.latlng.lng;
+                    const active = app.data.getActiveEvents(app.timeline.year);
+                    
+                    const nearby = active.filter(ev => {
+                        const d = this.distance(clickedLat, clickedLon, ev.hotspots[0].lat, ev.hotspots[0].lon);
+                        return d < ev.hotspots[0].radiusKm; 
+                    });
+
+                    if (nearby.length === 0) {
+                        app.focusedEventId = null;
+                        if(this.highlightLayer) {
+                            this.highlightLayer.setStyle({ weight: 1, color: '#333', fillOpacity: 0 });
+                            this.highlightLayer = null;
+                        }
+                    }
+
+                    this.updateSidebar(nearby, e.latlng);
+                    this.sidebar.classList.add('open');
+                });
+            }
+
+            updateCoords(e) {
+                if(this.coordsDisplay) {
+                    this.coordsDisplay.innerText = `${e.latlng.lat.toFixed(2)}, ${e.latlng.lng.toFixed(2)}`;
+                }
+            }
+
+            toggleScreenshotMode() {
+                this.isScreenshotMode = true;
+                document.body.classList.add('hide-ui');
+                this.showToast("UI Hidden. Click anywhere to restore.");
+                
+                // One-time listener to restore UI
+                setTimeout(() => {
+                    const restore = () => {
+                        document.body.classList.remove('hide-ui');
+                        this.isScreenshotMode = false;
+                        document.removeEventListener('click', restore);
+                    };
+                    document.addEventListener('click', restore);
+                }, 100);
+            }
+
+            toggleTheme() {
+                if (this.map.hasLayer(this.basemaps.dark)) {
+                    this.map.removeLayer(this.basemaps.dark);
+                    this.map.addLayer(this.basemaps.light);
+                } else {
+                    this.map.removeLayer(this.basemaps.light);
+                    this.map.addLayer(this.basemaps.dark);
+                }
+            }
+
+            distance(lat1, lon1, lat2, lon2) {
+                const R = 6371; 
+                const dLat = (lat2 - lat1) * Math.PI / 180;
+                const dLon = (lon2 - lon1) * Math.PI / 180;
+                const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                          Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
+                const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+                return R * c;
+            }
+
+            handleMapHover(e) {
+                if(!this.map || this.isScreenshotMode) return;
+                
+                const rect = this.map.getContainer().getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                
+                const latlng = this.map.containerPointToLatLng([x, y]);
+                const active = app.data.getActiveEvents(app.timeline.year);
+                
+                const hits = active.map(ev => {
+                    const spot = ev.hotspots[0];
+                    const dist = this.distance(latlng.lat, latlng.lng, spot.lat, spot.lon);
+                    return { ev, dist, visible: dist < spot.radiusKm };
+                }).filter(i => i.visible).sort((a,b) => a.dist - b.dist).slice(0, 3);
+
+                if (hits.length > 0) {
+                    this.tooltip.style.display = 'block';
+                    this.tooltip.style.left = (e.clientX + 15) + 'px';
+                    this.tooltip.style.top = (e.clientY + 15) + 'px';
+                    
+                    this.tooltip.innerHTML = hits.map(h => {
+                        const c = h.ev.type === 'war' ? 'text-orange-500' : (h.ev.type === 'empire' ? 'text-blue-400' : 'text-teal-400');
+                        return `<div class="mb-1"><strong class="${c}">${h.ev.title}</strong><br><span class="text-xs text-gray-400">${h.ev.type.toUpperCase()}</span></div>`;
+                    }).join('');
+                } else {
+                    this.tooltip.style.display = 'none';
+                }
+            }
+
+            handleSearch(query) {
+                const resDiv = document.getElementById('search-results');
+                if (query.length < 2) {
+                    resDiv.classList.add('hidden');
+                    return;
+                }
+                
+                const matches = this.data.events.filter(e => 
+                    e.title.toLowerCase().includes(query.toLowerCase()) || 
+                    e.tags.includes(query.toLowerCase())
+                ).slice(0, 5);
+
+                resDiv.innerHTML = matches.map(e => `
+                    <div class="p-2 hover:bg-white/10 cursor-pointer text-sm border-b border-gray-700"
+                        onclick="app.ui.focusEvent('${e.id}')">
+                        <span class="font-bold text-gray-200">${e.title}</span>
+                        <span class="text-xs text-gray-500 float-right">${e.start}</span>
+                    </div>
+                `).join('');
+                resDiv.classList.remove('hidden');
+            }
+
+            focusEvent(id) {
+                const evt = this.data.events.find(e => e.id === id);
+                if (evt) {
+                    app.focusedEventId = id; 
+                    app.timeline.scrub(evt.start);
+                    this.map.flyTo([evt.hotspots[0].lat, evt.hotspots[0].lon], 5, { duration: 1.5 });
+                    document.getElementById('search-results').classList.add('hidden');
+                    document.getElementById('search-input').value = '';
+                    
+                    this.updateSidebar([evt], {lat: evt.hotspots[0].lat, lng: evt.hotspots[0].lon});
+                    this.sidebar.classList.add('open');
+                }
+            }
+
+            updateSidebar(events, latlng) {
+                const container = document.getElementById('sidebar-content');
+                
+                if (events.length === 0) {
+                    container.innerHTML = `
+                        <div class="text-center text-gray-500 mt-10">
+                            <p class="text-lg mb-2">No Active Events</p>
+                            <p class="text-sm">at ${latlng.lat.toFixed(1)}, ${latlng.lng.toFixed(1)} in ${Math.floor(app.timeline.year)}</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                container.innerHTML = events.map(e => `
+                    <div class="bg-gray-800/50 p-4 rounded border-l-4 ${e.type === 'war' ? 'border-orange-500' : (e.type === 'empire' ? 'border-blue-500' : 'border-teal-400')}">
+                        <h3 class="font-bold text-lg mb-1">${e.title}</h3>
+                        <div class="text-xs text-gray-400 mb-2 uppercase tracking-wide flex justify-between">
+                            <span>${e.type}</span>
+                            <span>${e.start} - ${e.end}</span>
+                        </div>
+                        <p class="text-sm text-gray-300 leading-relaxed">${e.description}</p>
+                    </div>
+                `).join('');
+            }
+
+            toggleSidebar() {
+                this.sidebar.classList.toggle('open');
+            }
+
+            toggleEditor() {
+                const modal = document.getElementById('editor-modal');
+                modal.classList.toggle('active');
+            }
+
+            showToast(msg) {
+                const div = document.createElement('div');
+                div.className = 'fixed top-4 right-4 bg-green-600 text-white px-4 py-2 rounded shadow-lg z-50 animate-bounce';
+                div.innerText = msg;
+                document.body.appendChild(div);
+                setTimeout(() => div.remove(), 2000);
+            }
+        }
+
+        class StoryEngine {
+            constructor() {
+                this.playlists = {
+                    empires: [
+                        { year: 1520, title: "Age of Discovery", desc: "Spanish and Portuguese Empires expand." },
+                        { year: 1600, title: "The British East India Company", desc: "Rise of British trade dominance." },
+                        { year: 1800, title: "Napoleonic Era", desc: "French dominance in Europe." },
+                        { year: 1880, title: "Scramble for Africa", desc: "European powers colonize Africa." },
+                        { year: 1920, title: "Peak British Empire", desc: "Largest empire in history." }
+                    ],
+                    wars: [
+                        { year: 1618, title: "Thirty Years' War", desc: "Devastation in Central Europe." },
+                        { year: 1914, title: "World War I", desc: "The Great War begins." },
+                        { year: 1940, title: "World War II", desc: "Global total war." },
+                        { year: 1960, title: "Cold War", desc: "Proxy conflicts and nuclear tension." }
+                    ],
+                    tech: [
+                        { year: 1770, title: "Steam Power", desc: "The industrial revolution begins." },
+                        { year: 1840, title: "Telegraph & Rail", desc: "Shrinking the world." },
+                        { year: 1910, title: "Automobiles & Flight", desc: "Modern transportation emerges." },
+                        { year: 1995, title: "The Internet", desc: "The digital age connects humanity." }
+                    ]
+                };
+                this.active = false;
+            }
+
+            async load(key) {
+                if (this.active) return;
+                this.active = true;
+                const list = this.playlists[key];
+                
+                const captionTitle = document.getElementById('story-title');
+                const captionDesc = document.getElementById('story-desc');
+                const captionBox = document.getElementById('story-caption');
+
+                app.focusedEventId = null;
+
+                for (let item of list) {
+                    app.timeline.scrub(item.year);
+                    
+                    captionTitle.innerText = item.title;
+                    captionDesc.innerText = item.desc;
+                    captionBox.classList.remove('hidden');
+                    captionBox.classList.add('animate-bounce'); 
+
+                    await new Promise(r => setTimeout(r, 4000));
+                }
+
+                captionBox.classList.add('hidden');
+                this.active = false;
+            }
+        }
+
+        // --- Main Initialization ---
+
+        const app = {
+            data: null,
+            timeline: null,
+            ui: null,
+            story: null,
+            focusedEventId: null
+        };
+
+        window.onload = function() {
+            // 1. Initialize Map
+            const map = L.map('map', {
+                zoomControl: false,
+                attributionControl: false,
+                minZoom: 2,
+                worldCopyJump: true
+            }).setView([20, 0], 2);
+
+            // Basemaps
+            const basemaps = {
+                dark: L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                    attribution: '&copy; OpenStreetMap &copy; CartoDB',
+                    subdomains: 'abcd',
+                    maxZoom: 19
+                }),
+                light: L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+                    attribution: '&copy; OpenStreetMap &copy; CartoDB',
+                    subdomains: 'abcd',
+                    maxZoom: 19
+                })
+            };
+
+            basemaps.dark.addTo(map);
+
+            // Load Country Borders
+            fetch('https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json')
+                .then(res => res.json())
+                .then(geoData => {
+                    L.geoJSON(geoData, {
+                        style: { color: '#333', weight: 1, fillOpacity: 0 },
+                        onEachFeature: (feature, layer) => {
+                             layer.on('click', function(e) {
+                                if (app.ui.highlightLayer) {
+                                    app.ui.highlightLayer.setStyle({ weight: 1, color: '#333', fillOpacity: 0 });
+                                }
+                                layer.setStyle({ weight: 2, color: '#fbbf24', fillOpacity: 0.1 }); 
+                                app.ui.highlightLayer = layer;
+                                L.DomEvent.stopPropagation(e);
+                             });
+                        }
+                    }).addTo(map);
+                })
+                .catch(e => console.log('GeoJSON load skipped', e));
+
+            L.control.zoom({ position: 'topright' }).addTo(map);
+
+            // 2. Initialize Modules
+            app.data = new DataManager();
+            app.ui = new UIManager(app.data);
+            app.ui.setMap(map, basemaps);
+            app.story = new StoryEngine();
+
+            // 3. Setup Heatmap Layer
+            const heatLayer = new L.HistoryHeatLayer(app.data);
+            map.addLayer(heatLayer);
+
+            // 4. Setup Timeline
+            app.timeline = new TimelineController(app.data, (year, filters, opacities) => {
+                heatLayer.draw(year, filters, opacities);
+            });
+
+            // Keyboard Shortcuts
+            document.addEventListener('keydown', (e) => {
+                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+                if (e.code === 'Space') {
+                    e.preventDefault();
+                    app.timeline.togglePlay();
+                } else if (e.code === 'ArrowRight') {
+                    e.preventDefault();
+                    app.timeline.jump(e.shiftKey ? 10 : 1);
+                } else if (e.code === 'ArrowLeft') {
+                    e.preventDefault();
+                    app.timeline.jump(e.shiftKey ? -10 : -1);
+                }
+            });
+
+            // Initial Render
+            app.timeline.scrub(1500);
+
+            // Handle Add Event Save
+            app.data.saveCustomEvent = function() {
+                const title = document.getElementById('edit-title').value;
+                const type = document.getElementById('edit-type').value;
+                const start = parseInt(document.getElementById('edit-start').value);
+                const end = parseInt(document.getElementById('edit-end').value);
+                const lat = parseFloat(document.getElementById('edit-lat').value);
+                const lon = parseFloat(document.getElementById('edit-lon').value);
+                const desc = document.getElementById('edit-desc').value;
+                const rad = parseInt(document.getElementById('edit-rad').value);
+
+                if (!title || !start || isNaN(lat)) {
+                    alert("Please fill required fields (Title, Start Year, and click Map for location)");
+                    return;
+                }
+
+                app.data.addCustomEvent({
+                    id: 'cust_' + Date.now(),
+                    type, start, end: end || start + 1,
+                    title, desc, lat, lon, rad,
+                    int: 1.0, tags: ['custom']
+                });
+                
+                app.ui.toggleEditor();
+            };
+        };
+
+    </script>
+</body>
+</html>
